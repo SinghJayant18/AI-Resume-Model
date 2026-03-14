@@ -2,44 +2,62 @@ import streamlit as st
 import pdfplumber
 from docx import Document
 import io
-import re
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
 
 # --------------------
+# Load Environment Variables
+# --------------------
+load_dotenv()
+
+# --------------------
 # Gemini API Config
 # --------------------
-import google.generativeai as genai
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-API_KEY = "AIzaSyB8qBop0OqG5UEHZROYyWmj0fJI0V1-3PE"
-
-genai.configure(api_key=API_KEY)
-st.set_page_config(page_title="Smart Resume Tailor (Gemini)", layout="wide")
-# Auto-detect latest Gemini model that supports generateContent
-# Removed dynamic model fetching; using static model name
-MODEL_NAME = "gemini-pro"
-st.sidebar.info(f"Using model: {MODEL_NAME}")
+MODEL_NAME = "gemini-1.5-flash"
 
 # --------------------
-# Streamlit UI Setup
+# Streamlit Page Setup
 # --------------------
-st.title("Smart Resume Tailor — ATS-friendly Resume Optimizer (Gemini API)")
-st.write("This app uses the Gemini API to help you tailor your resume to match job descriptions, optimizing for ATS systems.")  
+st.set_page_config(
+    page_title="Smart Resume Tailor (Gemini)",
+    layout="wide"
+)
 
-uploaded_file = st.file_uploader("Upload resume (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
-job_desc = st.text_area("Paste job description here", height=200)
+st.title("Smart Resume Tailor — ATS Resume Optimizer")
+st.write(
+    "Upload your resume and paste a job description. "
+    "The app will analyze ATS compatibility and generate an optimized resume."
+)
+
+st.sidebar.info(f"Using Gemini Model: {MODEL_NAME}")
 
 # --------------------
-# Helper: Extract text
+# File Upload
+# --------------------
+uploaded_file = st.file_uploader(
+    "Upload Resume (PDF / DOCX / TXT)",
+    type=["pdf", "docx", "txt"]
+)
+
+job_desc = st.text_area(
+    "Paste Job Description",
+    height=200
+)
+
+# --------------------
+# Helper: Extract Text
 # --------------------
 def extract_text_from_file(uploaded_file):
     if uploaded_file is None:
         return ""
-    name = uploaded_file.name.lower()
+
+    file_name = uploaded_file.name.lower()
     data = uploaded_file.getvalue()
 
-    if name.endswith(".pdf"):
+    if file_name.endswith(".pdf"):
         text = ""
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             for page in pdf.pages:
@@ -48,52 +66,90 @@ def extract_text_from_file(uploaded_file):
                     text += page_text + "\n"
         return text
 
-    elif name.endswith(".docx"):
+    elif file_name.endswith(".docx"):
         doc = Document(io.BytesIO(data))
         return "\n".join([p.text for p in doc.paragraphs if p.text])
 
-    else:
+    elif file_name.endswith(".txt"):
         return data.decode("utf-8", errors="ignore")
 
+    return ""
+
 # --------------------
-# Helper: Gemini prompt
+# Gemini Prompt Function
 # --------------------
 def gemini_prompt(system_prompt, user_prompt):
     model = genai.GenerativeModel(MODEL_NAME)
-    prompt_text = f"{system_prompt}\n\n{user_prompt}"
-    response = model.generate_content(prompt_text)
+
+    full_prompt = f"""
+{system_prompt}
+
+{user_prompt}
+"""
+
+    response = model.generate_content(full_prompt)
+
     return response.text.strip()
 
+
 # --------------------
-# Main logic
+# Main Analysis Button
 # --------------------
-if st.button("Analyze & Tailor"):
+if st.button("Analyze & Tailor Resume"):
+
     if not uploaded_file:
-        st.error("Please upload a resume file.")
-    elif not job_desc.strip():
+        st.error("Please upload your resume.")
+        st.stop()
+
+    if not job_desc.strip():
         st.error("Please paste a job description.")
-    else:
-        with st.spinner("Extracting resume..."):
-            resume_text = extract_text_from_file(uploaded_file)
+        st.stop()
 
-        st.subheader("Extracted Resume Text")
-        st.text_area("Resume", resume_text, height=200)
+    with st.spinner("Extracting Resume Text..."):
+        resume_text = extract_text_from_file(uploaded_file)
 
-        # Single Gemini LLM call for ATS Score, Matched/Missing Skills, and Tailored Resume
-        unified_prompt = f"""
-Given the following ORIGINAL RESUME and JOB DESCRIPTION, perform the following:
+    st.subheader("Extracted Resume")
+    st.text_area("Resume Content", resume_text, height=250)
 
-1. Calculate the ATS match score (0-100%) based ONLY on the overlap of skillset and life experience.
-2. Return ONLY:
-   - The ATS match score as a percentage (e.g., 75%).
-   - A comma-separated list of matched skills/experiences.
-   - A comma-separated list of missing skills/experiences.
-3. Then, as an expert resume writer, produce:
-   - Dummy/fake projects that match the job description, including all tech stack and improvements made in the projects.
-   - Suggestions for projects that can be added to the resume which match the job description, with proper details and dummy projects, tech stack, and improvements (e.g., reduced latency, increased throughput, etc.).
-   - A short 2-3 line professional summary.
-   - An ATS-optimized resume (sections: Name, Contact, Summary, Skills, Experience with bullet points, Education).
-   - A bullet list of improvement suggestions.
+    # --------------------
+    # Gemini Prompt
+    # --------------------
+    unified_prompt = f"""
+Given the ORIGINAL RESUME and JOB DESCRIPTION below:
+
+Tasks:
+
+1. Calculate ATS match score (0–100%).
+2. Return:
+   - ATS match score
+   - Matched skills
+   - Missing skills
+
+3. Generate:
+   - Dummy projects matching the job description
+   - Suggested projects with tech stack and improvements
+   - 2–3 line professional summary
+   - ATS optimized resume
+
+Use this format:
+
+ATS Match Score: X%
+
+Matched Skills: skill1, skill2
+
+Missing Skills: skill1, skill2
+
+Professional Summary:
+...
+
+Suggested Projects:
+...
+
+Optimized Resume:
+(Name, Contact, Summary, Skills, Experience, Education)
+
+Improvement Suggestions:
+...
 
 ORIGINAL RESUME:
 {resume_text}
@@ -101,54 +157,92 @@ ORIGINAL RESUME:
 JOB DESCRIPTION:
 {job_desc}
 """
-        unified_result = gemini_prompt("You are a helpful ATS and resume assistant.", unified_prompt)
 
-        # Parse the unified_result for ATS score, matched, and missing (try to extract if possible)
-        score = 0
-        matched = []
-        unmatched = []
-        lines = unified_result.split("\n")
-        for line in lines:
-            if "match score" in line.lower():
-                score = int(''.join(filter(str.isdigit, line)))
-            elif "matched" in line.lower():
-                matched = [k.strip() for k in line.split(":",1)[-1].split(",") if k.strip()]
-            elif "missing" in line.lower():
-                unmatched = [k.strip() for k in line.split(":",1)[-1].split(",") if k.strip()]
-        st.metric("ATS Match Score", f"{score}%")
-        st.write("Matched:", matched)
-        st.write("Missing:", unmatched)
-
-        st.subheader("Tailored Resume Output")
-        st.write(unified_result)
-
-        # Save DOCX for download
-        doc_buffer = io.BytesIO()
-        doc = Document()
-        for line in unified_result.split("\n"):
-            doc.add_paragraph(line)
-        doc.save(doc_buffer)
-        doc_buffer.seek(0)
-        st.download_button(
-            label="Download Tailored Resume (DOCX)",
-            data=doc_buffer,
-            file_name="tailored_resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    with st.spinner("Analyzing Resume with Gemini..."):
+        result = gemini_prompt(
+            "You are an expert ATS resume analyzer and resume writer.",
+            unified_prompt
         )
-        st.success("Resume tailored successfully!")
+
+    # --------------------
+    # Parse ATS Score
+    # --------------------
+    score = 0
+    matched = []
+    missing = []
+
+    lines = result.split("\n")
+
+    for line in lines:
+
+        lower = line.lower()
+
+        if "match score" in lower:
+            digits = "".join(filter(str.isdigit, line))
+            if digits:
+                score = int(digits)
+
+        if "matched skills" in lower:
+            matched = [x.strip() for x in line.split(":")[-1].split(",")]
+
+        if "missing skills" in lower:
+            missing = [x.strip() for x in line.split(":")[-1].split(",")]
+
+    # --------------------
+    # Show Results
+    # --------------------
+    st.metric("ATS Match Score", f"{score}%")
+
+    st.subheader("Matched Skills")
+    st.write(matched)
+
+    st.subheader("Missing Skills")
+    st.write(missing)
+
+    st.subheader("Tailored Resume Output")
+    st.write(result)
+
+    # --------------------
+    # Generate DOCX Download
+    # --------------------
+    doc_buffer = io.BytesIO()
+
+    doc = Document()
+
+    for line in result.split("\n"):
+        doc.add_paragraph(line)
+
+    doc.save(doc_buffer)
+
+    doc_buffer.seek(0)
+
+    st.download_button(
+        label="Download Tailored Resume (DOCX)",
+        data=doc_buffer,
+        file_name="tailored_resume.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+
+    st.success("Resume tailored successfully!")
+
+
 else:
-    st.info("Upload a resume and paste a job description to get started.")
+    st.info("Upload a resume and paste a job description to begin.")
 
 # --------------------
 # Sidebar Info
 # --------------------
 st.sidebar.markdown("### About")
-st.sidebar.markdown("This app helps you tailor your resume to match job descriptions using AI. It extracts keywords, calculates ATS scores, and generates a tailored resume.")
-st.sidebar.markdown("### Contact")
-st.sidebar.markdown("For any issues or feedback, please reach out to the developer.")
-st.sidebar.markdown("### Disclaimer")
-st.sidebar.markdown("This app is for educational purposes only. The results may vary based on the input data and the AI model's capabilities.")
+st.sidebar.markdown(
+    "This tool analyzes your resume and job description to generate an ATS optimized resume using Google Gemini."
+)
+
 st.sidebar.markdown("### Privacy")
-st.sidebar.markdown("Your uploaded files and job descriptions are processed in memory and not stored. Please ensure you do not upload sensitive information.")
+st.sidebar.markdown(
+    "Your resume and job description are processed temporarily and not stored."
+)
+
 st.sidebar.markdown("### License")
-st.sidebar.markdown("This app is open-source. You can find the source code on [GitHub](https://github.com/your-repo).")
+st.sidebar.markdown(
+    "This project is for educational purposes."
+)
