@@ -16,7 +16,7 @@ genai.configure(api_key=API_KEY)
 st.set_page_config(page_title="Smart Resume Tailor (Gemini)", layout="wide")
 # Auto-detect latest Gemini model that supports generateContent
 # Removed dynamic model fetching; using static model name
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-1.5-flash-latest"
 st.sidebar.info(f"Using model: {MODEL_NAME}")
 
 # --------------------
