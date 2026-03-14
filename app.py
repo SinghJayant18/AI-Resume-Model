@@ -10,8 +10,10 @@ import google.generativeai as genai
 # --------------------
 # Gemini API Config
 # --------------------
-load_dotenv()  # Load environment variables from .env file
-API_KEY = os.getenv("API_KEY")
+import google.generativeai as genai
+
+API_KEY = "AIzaSyB8qBop0OqG5UEHZROYyWmj0fJI0V1-3PE"
+
 genai.configure(api_key=API_KEY)
 st.set_page_config(page_title="Smart Resume Tailor (Gemini)", layout="wide")
 # Auto-detect latest Gemini model that supports generateContent
